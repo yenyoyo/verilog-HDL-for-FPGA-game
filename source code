@@ -1,0 +1,893 @@
+`timescale 1ns / 1ps
+module graph(clk, column, row, rst, dip, sevenen, seven, LGM_En,s, LGM_RW, LGM_DI, LGM_CS1, LGM_CS2, LGM_RST, LGM_DATA,led);
+
+input clk,rst;
+input [7:0]s;
+input [3:0]column;
+input [6:0]dip;
+output reg [3:0]row;
+output reg [14:0]seven;
+reg [14:0]seventen,sevenzero,seven1,seven2;
+output reg [3:0]sevenen;
+output reg [15:0]led;
+output LGM_En, LGM_RW, LGM_DI;
+output LGM_CS1, LGM_CS2, LGM_RST;
+output [7:0] LGM_DATA;
+reg [1:0] scounter;
+reg [7:0] LGM_DATA;
+reg [7:0] page2,page6;
+reg [15:0]page3,page4;////3 for win 4 for lose
+reg [7:0] cugraph,augraph,aggraph,bombgraph,emptygraph,diamondgraph;
+reg [15:0] dug;
+reg [7:0] location;
+reg [3:0]x;
+reg [3:0]y;
+reg [4:0]score;
+reg [4:0]keyvalue;
+reg [1:0] LGM_SEL;
+reg [3:0] state;
+reg [3:0] playstate;
+reg [3:0] playnextstate;
+reg [1:0] pushstate;
+reg [1:0] pushnextstate;
+reg [1:0]mode;
+reg STOP;
+reg [2:0] graphindex;
+reg [2:0] X_Page;
+reg [24:0] counter;
+reg [1:0] delay;
+reg [7:0] index;
+reg [1:0] En;
+reg clear; 
+reg countdown;
+reg [7:0]timer;
+reg digsignal;
+reg [1:0]ten;
+reg LGM_RW, LGM_DI,LGM_RST; 
+wire LGM_clk, LGM_CS1, LGM_CS2, playclk; 
+wire LGM_En; 
+reg [1:0] EnableCount; 
+reg [3:0] NextState;
+reg [1:0] CounterRow;
+reg [4:0] key;
+reg [5:0]BouncingCountIn;
+reg [5:0]BouncingCountOut;
+wire SCLK; //Row Scaning CLK
+wire BCLK; //Debouncing CLK 
+wire LCLK;
+wire SSCLK;
+wire sevenclk;
+wire countdownclk;
+////除頻////
+always@(posedge clk or negedge rst) 
+begin 
+	if (!rst) 
+		counter<=25'd0; 
+	else 
+		counter<=counter+1'b1; 
+end 
+assign LGM_clk=counter[7];
+assign playclk=counter[7];
+assign SCLK=counter[19];
+assign BCLK=counter[14];
+assign sevenclk=counter[14];
+assign countdownclk=counter[24];
+
+//////輸入位置/////
+always@(posedge SCLK or negedge rst)偵測輸入的是X軸還是Y軸或是挖掘
+begin
+	if(!rst)
+	begin
+		x=4'd0; seventen=15'b111111111111111;
+		y=4'd0; sevenzero=15'b111111111111111;
+		ten=2'b01;
+		digsignal=1'd0;
+	end
+	else if(keyvalue==5'd10) begin
+		digsignal=1'd1;
+		ten=2'b01; end
+	else if((keyvalue>5'd0)&&(keyvalue<5'd5)&&(ten==2'b01))
+	begin
+		ten=2'b10;
+		case(keyvalue)
+		5'd1:begin y=4'b1000; seventen=15'b111111111111001; end
+		5'd2:begin y=4'b0100; seventen=15'b111111100100100; end
+		5'd3:begin y=4'b0010; seventen=15'b111111100110000; end
+		5'd4:begin y=4'b0001; seventen=15'b111111100011001; end
+		default: y=4'b0000;
+		endcase
+	end
+	else if((keyvalue>5'd0)&&(keyvalue<5'd5)&&(ten==2'b10))
+	begin
+		ten=2'b11;
+		case(keyvalue)
+		5'd1:begin x=4'b1000; sevenzero=15'b111111111111001; end
+		5'd2:begin x=4'b0100; sevenzero=15'b111111100100100; end
+		5'd3:begin x=4'b0010; sevenzero=15'b111111100110000; end
+		5'd4:begin x=4'b0001; sevenzero=15'b111111100011001; end
+		default: x=4'b0000;
+		endcase
+	end
+	else
+	begin
+		x=x; y=y; digsignal=1'd0;
+	end
+end
+		
+/************** LGM_En ************************/
+always@(posedge LGM_clk or negedge rst)
+begin
+	if(!rst)
+		EnableCount<=2'b0;
+	else
+		EnableCount<=EnableCount+1'b1;
+end
+assign LGM_En=(STOP)?1'b0:(EnableCount[0]&(~EnableCount[1]));
+/*************** Next State Control ****************************/
+always@(posedge LGM_clk or negedge rst)
+begin
+	if (!rst) begin
+		state<=4'd0; end //from state0
+	else 
+	begin// Send control of new state when EnableCount=2'b0;
+		if (EnableCount==2'd3) begin
+			state<=NextState;
+			 end
+		else begin
+			state<=state;
+			end
+	end
+end
+always@(posedge counter[9] or negedge rst)
+begin
+	if(!rst) begin
+		pushstate<=2'd0; 
+		playstate<=4'd0;
+		end
+	else 
+	begin// Send control of new state when EnableCount=2'b0;
+			playstate<=playnextstate;
+			pushstate<=pushnextstate; end
+	end
+/////遊戲狀態////
+always@(*)偵測是否使用雷達功能
+begin
+	case(pushstate)
+	2'd0: begin
+				if(s[6]==1'b0)
+					pushnextstate=2'd1;
+				else 
+					pushnextstate=2'd0;
+			end
+	2'd1: begin
+				pushnextstate=2'd2;
+			end
+	2'd2: begin
+				if(s[6]==1'b1)
+					pushnextstate=2'd3;
+				else 
+					pushnextstate=2'd2;
+			end
+	2'd3: begin
+				pushnextstate=2'd0;
+			end
+	endcase
+end
+always@(*)
+begin
+	case(playstate)
+	4'd0: begin					///一開始的狀態////
+				if(s[7]==1'b0) begin
+				playnextstate=4'd13;
+				dug=16'd0;
+				countdown=1'b1;
+				score=5'd0; end
+				else
+				playnextstate=4'd0;
+			end
+	4'd1: begin					///start等待輸入/////
+				if(digsignal==1'b1)按挖掘後  則依據裡面的圖形決定進入哪一組礦區並把挖哪個位置輸入8位元的座標
+				begin
+					case(mode)
+					2'b00: begin playnextstate=4'd2; location={y[3:0],x[3:0]}; end
+					2'b01: begin playnextstate=4'd3; location={y[3:0],x[3:0]}; end//MODE2
+					2'b10: begin playnextstate=4'd4; location={y[3:0],x[3:0]}; end//MODe3
+					2'b11: begin playnextstate=4'd5; location={y[3:0],x[3:0]}; end//MODE4
+					endcase
+				end
+				else
+				playnextstate=4'd1;
+			end
+	4'd2: begin					///MODE1的判斷////礦區1根據被挖的是哪一格進入下一個動作
+				case(location)
+				8'b10001000: begin playnextstate=4'd6; score=(score+5'd3); dug[0]=1'b1; end
+				8'b01001000: begin playnextstate=4'd7; score=(score+5'd2); dug[1]=1'b1; end
+				8'b00101000: begin if(dip[2:0]<3'b100) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[2]=1'b1; end
+				8'b00011000: begin playnextstate=4'd8; score=(score+5'd1); dug[3]=1'b1; end
+				8'b10000100: begin if(dip[2:0]<3'b011) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[4]=1'b1; end
+				8'b01000100: begin playnextstate=4'd9; dug[5]=1'b1; end
+				8'b00100100: begin playnextstate=4'd10; dug[6]=1'b1; end
+				8'b00010100: begin if(dip[6]==1'b0) begin
+											playnextstate=4'd6;
+											if(counter[24]==1'b1)
+												score=(score+5'd3);
+											else
+												score=score; end
+										 else begin playnextstate=4'd9; dug[7]=1'b1; end end
+				8'b10000010: begin playnextstate=4'd6; score=(score+5'd3); dug[8]=1'b1; end
+				8'b01000010: begin playnextstate=4'd10; dug[9]=1'b1; end
+				8'b00100010: begin playnextstate=4'd9; dug[10]=1'b1; end
+				8'b00010010: begin playnextstate=4'd7; score=(score+5'd2); dug[11]=1'b1; end
+				8'b10000001: begin if(dip[2:0]<3'b101) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[12]=1'b1; end
+				8'b01000001: begin playnextstate=4'd9; dug[13]=1'b1; end
+				8'b00100001: begin playnextstate=4'd6; score=(score+5'd3); dug[14]=1'b1; end
+				8'b00010001: begin playnextstate=4'd9; dug[15]=1'b1; end
+				default: playnextstate=4'd15;
+				endcase
+			end
+	4'd3: begin					///MODE2的判斷////礦區2
+				case(location)
+				8'b10001000: begin playnextstate=4'd10; dug[0]=1'b1; end
+				8'b01001000: begin if(dip[2:0]<3'b101) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[1]=1'b1; end
+				8'b00101000: begin playnextstate=4'd10; dug[2]=1'b1; end
+				8'b00011000: begin if(dip[6]==1'b0) begin
+											playnextstate=4'd6;
+											if(counter[24]==1'b1)
+												score=(score+5'd3);
+											else
+												score=score; end
+										 else begin playnextstate=4'd9; dug[3]=1'b1; end end
+				8'b10000100: begin playnextstate=4'd9; dug[4]=1'b1; end
+				8'b01000100: begin playnextstate=4'd7; score=(score+5'd2); dug[5]=1'b1; end
+				8'b00100100: begin playnextstate=4'd9; dug[6]=1'b1; end
+				8'b00010100: begin playnextstate=4'd6; score=(score+5'd3); dug[7]=1'b1; end
+				8'b10000010: begin playnextstate=4'd6; score=(score+5'd3); dug[8]=1'b1; end
+				8'b01000010: begin playnextstate=4'd9; dug[9]=1'b1; end
+				8'b00100010: begin playnextstate=4'd6; score=(score+5'd3); dug[10]=1'b1; end
+				8'b00010010: begin playnextstate=4'd9; dug[11]=1'b1; end
+				8'b10000001: begin if(dip[2:0]<3'b100) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[12]=1'b1; end
+				8'b01000001: begin playnextstate=4'd7; score=(score+5'd2); dug[13]=1'b1; end
+				8'b00100001: begin if(dip[2:0]<3'b011) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[14]=1'b1; end
+				8'b00010001: begin playnextstate=4'd8; score=(score+5'd1); dug[15]=1'b1; end
+				default: playnextstate=4'd15;
+				endcase
+			end
+	4'd4: begin					///MODE3的判斷////礦區3
+				case(location)
+				8'b10001000: begin if(dip[2:0]<3'b100) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[0]=1'b1; end
+				8'b01001000: begin playnextstate=4'd7; score=(score+5'd2); dug[1]=1'b1; end
+				8'b00101000: begin playnextstate=4'd6; score=(score+5'd3); dug[2]=1'b1; end
+				8'b00011000: begin if(dip[2:0]<3'b011) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[3]=1'b1; end
+				8'b10000100: begin playnextstate=4'd6; score=(score+5'd3); dug[4]=1'b1; end
+				8'b01000100: begin playnextstate=4'd9; dug[5]=1'b1; end
+				8'b00100100: begin if(dip[2:0]<3'b101) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[6]=1'b1; end
+				8'b00010100: begin playnextstate=4'd8; score=(score+5'd1); dug[7]=1'b1; end
+				8'b10000010: begin playnextstate=4'd9; dug[8]=1'b1; end
+				8'b01000010: begin if(dip[6]==1'b0) begin
+											playnextstate=4'd6; 
+											if(counter[24]==1'b1)
+												score=(score+5'd3);
+											else
+												score=score; end
+										 else begin playnextstate=4'd9; dug[9]=1'b1; end end
+				8'b00100010: begin playnextstate=4'd10; dug[10]=1'b1; end
+				8'b00010010: begin playnextstate=4'd9; dug[11]=1'b1; end
+				8'b10000001: begin playnextstate=4'd10; dug[12]=1'b1; end
+				8'b01000001: begin playnextstate=4'd6; score=(score+5'd3); dug[13]=1'b1; end
+				8'b00100001: begin playnextstate=4'd9; dug[14]=1'b1; end
+				8'b00010001: begin playnextstate=4'd7; score=(score+5'd2); dug[15]=1'b1; end
+				default: playnextstate=4'd15;
+				endcase
+			end
+	4'd5: begin					///MODE4的判斷////礦區1
+				case(location)
+				8'b10001000: begin playnextstate=4'd6; score=(score+5'd3); dug[0]=1'b1; end
+				8'b01001000: begin playnextstate=4'd7; score=(score+5'd2); dug[1]=1'b1; end
+				8'b00101000: begin playnextstate=4'd9; dug[2]=1'b1; end
+				8'b00011000: begin if(dip[2:0]<3'b011) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[3]=1'b1; end
+				8'b10000100: begin playnextstate=4'd7; score=(score+5'd2); dug[4]=1'b1; end
+				8'b01000100: begin playnextstate=4'd9; dug[5]=1'b1; end
+				8'b00100100: begin if(dip[2:0]<3'b101) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[6]=1'b1; end
+				8'b00010100: begin playnextstate=4'd9; dug[7]=1'b1; end
+				8'b10000010: begin playnextstate=4'd9; dug[8]=1'b1; end
+				8'b01000010: begin playnextstate=4'd10; dug[9]=1'b1; end
+				8'b00100010: begin playnextstate=4'd8; score=(score+5'd1); dug[10]=1'b1; end
+				8'b00010010: begin playnextstate=4'd10; dug[11]=1'b1; end
+				8'b10000001: begin playnextstate=4'd6; score=(score+5'd3); dug[12]=1'b1; end
+				8'b01000001: begin if(dip[6]==1'b0) begin
+											playnextstate=4'd6; 
+											if(counter[24]==1'b1) 
+												score=(score+5'd3); 
+											else 
+												score=score; end
+										 else begin playnextstate=4'd9; dug[13]=1'b1; end end
+				8'b00100001: begin if(dip[2:0]<3'b100) 
+											playnextstate=4'd10;
+										 else playnextstate=4'd9; dug[14]=1'b1; end
+				8'b00010001: begin playnextstate=4'd6; score=(score+5'd3); dug[15]=1'b1; end
+				default: playnextstate=4'd15;
+				endcase
+			end
+	4'd6: begin/////ag依據被挖的是哪個做贏或輸的判斷
+				if((dip[6]==1'b1)&&(score>=5'd13))
+				playnextstate=4'd11;
+				else if((dip[6]==1'b0)&&(score>=5'd16))
+				playnextstate=4'd11;
+				else playnextstate=4'd12;
+			end
+	4'd7: begin/////au依據被挖的是哪個做贏或輸的判斷
+				if((dip[6]==1'b1)&&(score>=5'd13))
+				playnextstate=4'd11;
+				else if((dip[6]==1'b0)&&(score>=5'd16))
+				playnextstate=4'd11;
+				else playnextstate=4'd12;
+			end
+	
+	4'd8: begin////cu依據被挖的是哪個做贏或輸的判斷
+				if((dip[6]==1'b1)&&(score>=5'd13))
+				playnextstate=4'd11;
+				else if((dip[6]==1'b0)&&(score>=5'd16))
+				playnextstate=4'd11;
+				else playnextstate=4'd12;
+			end
+	
+	4'd9: begin////empty依據被挖的是哪個做贏或輸的判斷
+				playnextstate=4'd12;
+			end
+	
+	4'd10: begin///lose輸掉的狀態
+				playnextstate=4'd10;
+			 end
+	4'd11: begin///win勝利的狀態
+				playnextstate=4'd11;
+			 end
+	4'd12: begin
+				if(digsignal==1'b0)
+					playnextstate=4'd1;
+				else
+					playnextstate=4'd12;
+			 end
+	4'd13: begin隨機迷宮圖形
+				mode=counter[11:10];
+				playnextstate=4'd14;
+			end
+	4'd14: begin案START進入遊戲
+				if(s[7]==1'b1)
+				playnextstate=4'd1;
+				else
+				playnextstate=4'd14;
+			 end
+	default: playnextstate=4'd15;
+	endcase			
+end
+/////LGM///////
+always@(*)
+begin
+	case (state)
+	4'd0: begin STOP=0;
+	LGM_RST=0; // assert LGM_RST
+	LGM_SEL=2'b11;
+	LGM_DI=1'b0; LGM_RW=1'b0;
+	LGM_DATA=8'd0;
+	NextState=4'd1; end
+	
+	4'd1: begin STOP=0;
+	LGM_RST=1; // back to normal mode
+	LGM_SEL=2'b11;
+	LGM_DI=1'b0; LGM_RW=1'b0;
+	LGM_DATA=8'h3F; //display on the screen, P8
+	NextState=4'd2; end
+	
+	4'd2: begin STOP=0; 
+	LGM_RST=1; 
+	LGM_SEL=2'b11; 
+	LGM_DI=1'b0; 
+	LGM_RW=1'b0; 
+	LGM_DATA=8'b11_000000; //start line is 0, P11 
+	NextState=4'd3; end 
+	
+	4'd3: begin STOP=0; 
+	LGM_RST=1; 
+	LGM_SEL=2'b11; 
+	LGM_DI=1'b0; 
+	LGM_RW=1'b0; 
+	LGM_DATA=8'h40; //Y address register = 0, P9 
+	NextState=4'd4; end 
+	
+	4'd4: begin STOP=0; 
+	LGM_RST=1; 
+	LGM_SEL=2'b11; 
+	LGM_DI=1'b0; 
+	LGM_RW=1'b0; 
+	LGM_DATA= {5'b10111,X_Page}; //page 0, P10 
+	NextState=4'd5; end
+	
+	4'd5: begin STOP=0; // clear screen
+	LGM_RST=1;
+	LGM_SEL=2'b11;
+	LGM_DI=1'b1; LGM_RW=1'b0; // write data
+	LGM_DATA=8'd00; //write " "
+	if ((X_Page<3'd7)&&(index==8'd127))
+	NextState=4'd4;
+	else if ((X_Page==3'd7)&&(index==8'd127))
+	NextState=4'd6;
+	else
+	NextState=4'd5;
+	end
+
+	4'd6: begin STOP=0;
+	LGM_RST=1;
+	LGM_SEL=2'b11;
+	LGM_DI=1'b0; LGM_RW=1'b0;
+	LGM_DATA= {5'b10111,X_Page}; //set page, P10
+	if((playstate==4'd10)||(timer==8'd0))
+		NextState=4'd11;
+	else if(playstate==4'd11)
+		NextState=4'd12;
+	else begin
+	case(mode)
+	2'b00: NextState=4'd7;
+	2'b01: NextState=4'd8;
+	2'b10: NextState=4'd9;
+	2'b11: NextState=4'd10;
+	endcase
+	end
+end
+	
+	4'd7: begin STOP=0; /////////////mode00印礦產圖加被挖的圖形
+	LGM_RST=1; 
+	if (index<64) LGM_SEL=2'b01; 
+	else LGM_SEL=2'b10; LGM_DI=1'b1; LGM_RW=1'b0; // write data 
+	/////page2
+	if ((X_Page==3'd2)&&((dug[12]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)&&(dip[2:0]<3'b101))
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd2)&&((dug[12]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56))
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd2)&&((dug[13]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64))
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd2)&&((dug[14]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72))
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd2)&&((dug[15]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|emptygraph);
+	else if (X_Page==3'd2) LGM_DATA=page2; 
+	/////page3
+	else if((X_Page==3'd3)&&((dug[8]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd3)&&((dug[9]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd3)&&((dug[10]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd3)&&((dug[11]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|augraph);
+	else if(X_Page==3'd3) LGM_DATA=page2;
+	////page4
+	else if((X_Page==3'd4)&&((dug[4]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)&&(dip[2:0]<3'b011)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd4)&&((dug[4]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd4)&&((dug[5]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd4)&&((dug[6]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd4)&&(index>8'd71)&&(index<8'd80)&&(dip[6]==1'b0)&&(counter[24]==1'b1)) 
+	LGM_DATA=(page2|diamondgraph);
+	else if((X_Page==3'd4)&&((dug[7]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|emptygraph);
+	else if(X_Page==3'd4) LGM_DATA=page2;
+	////page5
+	else if((X_Page==3'd5)&&((dug[0]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd5)&&((dug[1]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|augraph);
+	else if((X_Page==3'd5)&&((dug[2]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)&&(dip[2:0]<3'b100)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd5)&&((dug[2]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd5)&&((dug[3]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|cugraph);
+	else if(X_Page==3'd5) LGM_DATA=page2;
+	///page6
+	else LGM_DATA=page6; 
+	if ((X_Page==3'd6)&&(index==8'd127)) NextState=4'd13; 
+	else if (((X_Page==3'd2)||(X_Page==3'd3)||(X_Page==3'd4)||(X_Page==3'd5))&&(index==8'd127)) NextState=4'd6; 
+	else NextState=4'd7; end
+	
+	4'd8: begin STOP=0; /////////////mode01印礦產圖加被挖的圖形
+	LGM_RST=1; 
+	if (index<64) LGM_SEL=2'b01; 
+	else LGM_SEL=2'b10; LGM_DI=1'b1; LGM_RW=1'b0; // write data 
+	////page2
+	if ((X_Page==3'd2)&&((dug[12]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)&&(dip[2:0]<3'b100))
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd2)&&((dug[12]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56))
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd2)&&((dug[13]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64))
+	LGM_DATA=(page2|augraph);
+	else if((X_Page==3'd2)&&((dug[14]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)&&(dip[2:0]<3'b011))
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd2)&&((dug[14]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72))
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd2)&&((dug[15]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|cugraph);
+	else if (X_Page==3'd2) LGM_DATA=page2; 
+	/////page3
+	else if((X_Page==3'd3)&&((dug[8]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd3)&&((dug[9]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd3)&&((dug[10]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd3)&&((dug[11]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|emptygraph);
+	else if(X_Page==3'd3) LGM_DATA=page2;
+	////page4
+	else if((X_Page==3'd4)&&((dug[4]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd4)&&((dug[5]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|augraph);
+	else if((X_Page==3'd4)&&((dug[6]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd4)&&((dug[7]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|aggraph);
+	else if(X_Page==3'd4) LGM_DATA=page2;
+	////page5
+	else if((X_Page==3'd5)&&((dug[0]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd5)&&((dug[1]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)&&(dip[2:0]<3'b101)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd5)&&((dug[1]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd5)&&((dug[2]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd5)&&(index>8'd71)&&(index<8'd80)&&(dip[6]==1'b0)&&(counter[24]==1'b1)) 
+	LGM_DATA=(page2|diamondgraph);
+	else if((X_Page==3'd5)&&((dug[3]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|emptygraph);
+	else if(X_Page==3'd5) LGM_DATA=page2;
+	///page6
+	else LGM_DATA=page6; 
+	if ((X_Page==3'd6)&&(index==8'd127)) NextState=4'd13; 
+	else if (((X_Page==3'd2)||(X_Page==3'd3)||(X_Page==3'd4)||(X_Page==3'd5))&&(index==8'd127)) NextState=4'd6; 
+	else NextState=4'd8; end
+	
+	4'd9: begin STOP=0; /////////////mode10印礦產圖加被挖的圖形
+	LGM_RST=1; 
+	if (index<64) LGM_SEL=2'b01; 
+	else LGM_SEL=2'b10; LGM_DI=1'b1; LGM_RW=1'b0; // write data 
+	/////page
+	if ((X_Page==3'd2)&&((dug[12]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56))
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd2)&&((dug[13]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64))
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd2)&&((dug[14]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72))
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd2)&&((dug[15]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|augraph);
+	else if (X_Page==3'd2) LGM_DATA=page2; 
+	/////page3
+	else if((X_Page==3'd3)&&((dug[8]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd3)&&(index>8'd55)&&(index<8'd64)&&(dip[6]==1'b0)&&(counter[24]==1'b1)) 
+	LGM_DATA=(page2|diamondgraph);
+	else if((X_Page==3'd3)&&((dug[9]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd3)&&((dug[10]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd3)&&((dug[11]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|emptygraph);
+	else if(X_Page==3'd3) LGM_DATA=page2;
+	////page4
+	else if((X_Page==3'd4)&&((dug[4]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd4)&&((dug[5]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd4)&&((dug[6]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)&&(dip[2:0]<3'b101)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd4)&&((dug[6]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd4)&&((dug[7]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|cugraph);
+	else if(X_Page==3'd4) LGM_DATA=page2;
+	////page5
+	else if((X_Page==3'd5)&&((dug[0]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)&&(dip[2:0]<3'b100)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd5)&&((dug[0]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd5)&&((dug[1]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|augraph);
+	else if((X_Page==3'd5)&&((dug[2]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd5)&&((dug[3]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)&&(dip[2:0]<3'b011)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd5)&&((dug[3]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|emptygraph);
+	else if(X_Page==3'd5) LGM_DATA=page2;
+	///page6
+	else LGM_DATA=page6; 
+	if ((X_Page==3'd6)&&(index==8'd127)) NextState=4'd13; 
+	else if (((X_Page==3'd2)||(X_Page==3'd3)||(X_Page==3'd4)||(X_Page==3'd5))&&(index==8'd127)) NextState=4'd6; 
+	else NextState=4'd9; end
+	
+	4'd10: begin STOP=0; /////////////mode11印礦產圖加被挖的圖形
+	LGM_RST=1; 
+	if (index<64) LGM_SEL=2'b01; 
+	else LGM_SEL=2'b10; LGM_DI=1'b1; LGM_RW=1'b0; // write data 
+	if ((X_Page==3'd2)&&((dug[12]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56))
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd2)&&(index>8'd55)&&(index<8'd64)&&(dip[6]==1'b0)&&(counter[24]==1'b1))
+	LGM_DATA=(page2|diamondgraph);
+	else if((X_Page==3'd2)&&((dug[13]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64))
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd2)&&((dug[14]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)&&(dip[2:0]<3'b100))
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd2)&&((dug[14]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72))
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd2)&&((dug[15]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|aggraph);
+	else if (X_Page==3'd2) LGM_DATA=page2; 
+	/////page3
+	else if((X_Page==3'd3)&&((dug[8]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd3)&&((dug[9]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd3)&&((dug[10]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|cugraph);
+	else if((X_Page==3'd3)&&((dug[11]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|bombgraph);
+	else if(X_Page==3'd3) LGM_DATA=page2;
+	////page4
+	else if((X_Page==3'd4)&&((dug[4]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|augraph);
+	else if((X_Page==3'd4)&&((dug[5]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd4)&&((dug[6]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)&&(dip[2:0]<3'b101)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd4)&&((dug[6]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd4)&&((dug[7]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|emptygraph);
+	else if(X_Page==3'd4) LGM_DATA=page2;
+	////page5
+	else if((X_Page==3'd5)&&((dug[0]==1'b1)||(s[6]==1'b0))&&(index>8'd47)&&(index<8'd56)) 
+	LGM_DATA=(page2|aggraph);
+	else if((X_Page==3'd5)&&((dug[1]==1'b1)||(s[6]==1'b0))&&(index>8'd55)&&(index<8'd64)) 
+	LGM_DATA=(page2|augraph);
+	else if((X_Page==3'd5)&&((dug[2]==1'b1)||(s[6]==1'b0))&&(index>8'd63)&&(index<8'd72)) 
+	LGM_DATA=(page2|emptygraph);
+	else if((X_Page==3'd5)&&((dug[3]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)&&(dip[2:0]<3'b011)) 
+	LGM_DATA=(page2|bombgraph);
+	else if((X_Page==3'd5)&&((dug[3]==1'b1)||(s[6]==1'b0))&&(index>8'd71)&&(index<8'd80)) 
+	LGM_DATA=(page2|emptygraph);
+	else if(X_Page==3'd5) LGM_DATA=page2;
+	///page6
+	else LGM_DATA=page6; 
+	if ((X_Page==3'd6)&&(index==8'd127)) NextState=4'd13; 
+	else if (((X_Page==3'd2)||(X_Page==3'd3)||(X_Page==3'd4)||(X_Page==3'd5))&&(index==8'd127)) NextState=4'd6; 
+	else NextState=4'd10; end
+	
+	4'd11: begin STOP=0; /////////////lose印FAILED
+	LGM_RST=1; 
+	if (index<64) LGM_SEL=2'b01; 
+	else LGM_SEL=2'b10; LGM_DI=1'b1; LGM_RW=1'b0; // write data 
+	if (X_Page==3'd2)
+	LGM_DATA=8'd0;
+	else if(X_Page==3'd3)
+	LGM_DATA=page4[7:0];
+	else if(X_Page==3'd4) 
+	LGM_DATA=page4[15:8];
+	else if(X_Page==3'd5)
+	LGM_DATA=8'd0;
+	else LGM_DATA=8'd0; 
+	if ((X_Page==3'd6)&&(index==8'd127)) NextState=4'd14; 
+	else if (((X_Page==3'd2)||(X_Page==3'd3)||(X_Page==3'd4)||(X_Page==3'd5))&&(index==8'd127)) NextState=4'd6; 
+	else NextState=4'd11; end
+	
+	4'd12: begin STOP=0; /////////////win印WIN
+	LGM_RST=1; 
+	if (index<64) LGM_SEL=2'b01; 
+	else LGM_SEL=2'b10; LGM_DI=1'b1; LGM_RW=1'b0; // write data 
+	if (X_Page==3'd2)
+	LGM_DATA=8'd0;
+	else if(X_Page==3'd3)
+	LGM_DATA=page3[7:0];
+	else if(X_Page==3'd4) 
+	LGM_DATA=page3[15:8];
+	else if(X_Page==3'd5)
+	LGM_DATA=8'd0;
+	else LGM_DATA=8'd0; 
+	if ((X_Page==3'd6)&&(index==8'd127)) NextState=4'd14; 
+	else if (((X_Page==3'd2)||(X_Page==3'd3)||(X_Page==3'd4)||(X_Page==3'd5))&&(index==8'd127)) NextState=4'd6; 
+	else NextState=4'd12; end
+	
+	4'd14: begin STOP=0; 停止印
+	LGM_RST=1; 
+	LGM_SEL=2'b11;
+	LGM_DI=1'b0; 
+	LGM_RW=1'b0; 
+	LGM_DATA=8'd0;
+	NextState=4'd14; 
+	end 
+	
+	default: begin STOP=1; // stop LGM_En 
+	LGM_RST=1; 
+	LGM_SEL=2'b11;
+	LGM_DI=1'b0; 
+	LGM_RW=1'b0; 
+	LGM_DATA=8'd0;
+	if((playstate==4'd10)||(playstate==4'd11)||(dip[6]==1'b0))有被挖崛或贏或輸則重印圖
+	NextState=4'd5;
+	else if((playstate==4'd12)||(pushstate==2'd1)||(pushstate==2'd3)||(timer==8'd0))
+	NextState=4'd5;
+	else
+	NextState=4'd13; 
+	end 
+	endcase 
+end
+
+/*************** Page & index Control****************************/ 
+always@(posedge LGM_clk or negedge rst) 
+begin 
+	if (!rst) begin 
+	X_Page<=3'd0; //from page 0 
+	index<=8'd0; 
+	graphindex<=8'd0;
+	end 
+	else begin // Send control of new X_Page and index // when EnableCount=2'b0; 
+	if ((EnableCount==2'd3) && (state==4'd5)) 
+	begin 
+		if (index==8'd127) 
+		begin 
+			if (X_Page==3'd7) X_Page<=3'd2; 
+			else X_Page <= X_Page+1'b1; index<=8'd0; graphindex<=8'd0;
+		end 
+		else 
+		begin 
+			X_Page<=X_Page; 
+			index<=index+1'b1;
+			graphindex<=graphindex+1'b1;
+		end 
+	end
+	else if ((EnableCount==2'd3) && ((state==4'd7)||(state==4'd8)||(state==4'd9)||(state==4'd10)||(state==4'd11)||(state==4'd12))) 
+	begin 
+		if (((X_Page==3'd2)||(X_Page==3'd3)||(X_Page==3'd4)||(X_Page==3'd5))&&(index==8'd127)) 
+		begin 
+			X_Page<=X_Page+1'b1; 
+			index<=8'd0;
+			graphindex<=8'd0;			
+		end 
+		else begin 
+		X_Page<=X_Page; 
+		index<=index+1'b1;
+		graphindex<=graphindex+1'b1;
+		end 
+	end 
+	else 
+	begin 
+		X_Page<=X_Page; 
+		index<=index;
+		graphindex<=graphindex;
+	end 
+	end 
+	end 
+assign LGM_CS1=LGM_SEL[0]; 
+assign LGM_CS2=LGM_SEL[1];
+/////seven////
+always@(posedge sevenclk or negedge rst)
+begin
+	if(!rst) begin
+		sevenen<=4'b1111;
+		seven<=15'd0;
+		scounter<=2'b00;
+		end
+	else begin
+		case(scounter)
+		2'b00: begin sevenen<=4'b0111; seven<=seven1; end
+		2'b01: begin sevenen<=4'b1011; seven<=seven2; end
+		2'b10: begin sevenen<=4'b1101; seven<=seventen; end
+		2'b11: begin sevenen<=4'b1110; seven<=sevenzero; end
+		endcase
+		scounter<=scounter+1'b1;
+	end
+end
+//////countdown////
+always@(posedge countdownclk or negedge rst)控制倒數
+begin
+	if(!rst) begin
+		case(dip[5:3])
+		3'b000: begin timer[7:4]<=4'd7; timer[3:0]<=4'd0; end
+		3'b001: begin timer[7:4]<=4'd6; timer[3:0]<=4'd0; end
+		3'b010: begin timer[7:4]<=4'd5; timer[3:0]<=4'd0; end
+		3'b011: begin timer[7:4]<=4'd4; timer[3:0]<=4'd0; end
+		3'b100: begin timer[7:4]<=4'd3; timer[3:0]<=4'd0; end
+		3'b101: begin timer[7:4]<=4'd2; timer[3:0]<=4'd0; end
+		3'b110: begin timer[7:4]<=4'd1; timer[3:0]<=4'd0; end
+		default:  begin timer[7:4]<=4'd7; timer[3:0]<=4'd0; end
+		endcase
+		end
+	else if(timer==8'd0) begin
+			timer<=timer; end
+	else if((countdown==1'b1)&&(dip[6]==1'b0)) begin
+		if(timer[3:0]==4'd0) begin
+			timer[3:0]<=4'd9;
+			timer[7:4]<=timer[7:4]-4'd1; end
+		else begin
+			timer[7:4]<=timer[7:4];
+			timer[3:0]<=timer[3:0]-4'd1; end		
+		end
+	else begin
+		timer<=timer; end	
+end
+///
+always@(timer)
+begin
+	case(timer[7:4])
+	4'd7: seven1=15'b111111111011000;
+	4'd6: seven1=15'b111111100000010;
+	4'd5: seven1=15'b111111100010010;
+	4'd4: seven1=15'b111111100011001;
+	4'd3: seven1=15'b111111100110000;
+	4'd2: seven1=15'b111111100100100;
+	4'd1: seven1=15'b111111111111001;
+	default: seven1=15'b111111111000000;
+	endcase
+	
+	case(timer[3:0])
+	4'd0: seven2=15'b111111111000000;
+	4'd9: seven2=15'b111111100010000;
+	4'd8: seven2=15'b111111100000000;
+	4'd7: seven2=15'b111111111011000;
+	4'd6: seven2=15'b111111100000010;
+	4'd5: seven2=15'b111111100010010;
+	4'd4: seven2=15'b111111100011001;
+	4'd3: seven2=15'b111111100110000;
+	4'd2: seven2=15'b111111100100100;
+	4'd1: seven2=15'b111111111111001;
+	default: seven2=15'b111111111000000;
+	endcase
+end
+///led
+always@(score)控制LED燈
+begin
+	case(score)
+	5'd1: led=16'b1000000000000000;
+	5'd2: led=16'b1100000000000000;
+	5'd3: led=16'b1110000000000000;
+	5'd4: led=16'b1111000000000000;
+	5'd5: led=16'b1111100000000000;
+	5'd6: led=16'b1111110000000000;
+	5'd7: led=16'b1111111000000000;
+	5'd8: led=16'b1111111100000000;
+	5'd9: led=16'b1111111110000000;
+	5'd10: led=16'b1111111111000000;
+	5'd11: led=16'b1111111111100000;
+	5'd12: led=16'b1111111111110000;
+	5'd13: led=16'b1111111111111000;
+	5'd14: led=16'b1111111111111100;
+	5'd15: led=16'b1111111111111110;
+	5'd16: led=16'b1111111111111111;
+	default: led=16'b0000000000000000;
+	endcase
+end
+endmodule
